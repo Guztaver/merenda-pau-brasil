@@ -1,10 +1,11 @@
 use super::Db;
-use crate::validation::{date, kg, sql, R};
+use crate::validation::{kg, sql, R};
 use rusqlite::params;
 impl Db {
     pub fn report(&self, a: &str, b: &str) -> R<String> {
-        date(a)?;
-        date(b)?;
+        self.require(&[])?;
+        let a = crate::validation::iso_date(a)?;
+        let b = crate::validation::iso_date(b)?;
         if a > b {
             return Err("A data inicial deve vir antes da final.".into());
         }
@@ -23,8 +24,8 @@ impl Db {
         {
             let (n, x, y, z) = r.map_err(sql)?;
             out += &format!(
-                "\"{}\";{};{};{};{}\n",
-                n.replace('"', "\"\""),
+                "{};{};{};{};{}\n",
+                super::exports::csv(&n),
                 kg(x),
                 kg(y),
                 kg(z),
@@ -32,7 +33,7 @@ impl Db {
             );
         }
         out += "\nData;Escola;Refeição;Porções\n";
-        let mut s=self.c.prepare("SELECT v.date,s.name,r.name,v.portions FROM servings v JOIN schools s ON s.id=v.school JOIN recipes r ON r.id=v.recipe WHERE v.date BETWEEN ? AND ? ORDER BY v.date,v.id").map_err(sql)?;
+        let mut s=self.c.prepare("SELECT date,school,recipe,portions FROM (SELECT v.date,s.name school,r.name recipe,v.portions FROM servings v JOIN schools s ON s.id=v.school JOIN recipes r ON r.id=v.recipe UNION ALL SELECT o.date,s.name,r.name,-v.portions FROM operations o JOIN servings v ON v.operation_id=o.reversal_of JOIN schools s ON s.id=v.school JOIN recipes r ON r.id=v.recipe) WHERE date BETWEEN ? AND ? ORDER BY date").map_err(sql)?;
         for r in s
             .query_map(params![a, b], |r| {
                 Ok((
@@ -46,10 +47,10 @@ impl Db {
         {
             let (d, s, r, n) = r.map_err(sql)?;
             out += &format!(
-                "{};\"{}\";\"{}\";{}\n",
+                "{};{};{};{}\n",
                 d,
-                s.replace('"', "\"\""),
-                r.replace('"', "\"\""),
+                super::exports::csv(&s),
+                super::exports::csv(&r),
                 n
             );
         }

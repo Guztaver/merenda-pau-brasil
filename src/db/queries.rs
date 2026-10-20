@@ -1,12 +1,13 @@
-use super::Db;
+use super::{security::audit, Db};
 use crate::validation::{sql, R};
 use rusqlite::params;
-
 pub struct Movement {
     pub date: String,
     pub food: String,
     pub grams: i64,
     pub note: String,
+    pub unit: String,
+    pub unit_grams: i64,
 }
 pub struct Serving {
     pub date: String,
@@ -19,30 +20,38 @@ pub struct Ingredient {
     pub name: String,
     pub grams: i64,
 }
-
 impl Db {
-    pub fn add_food(&self, name: &str, minimum: &str) -> R<()> {
-        if name.trim().is_empty() {
-            return Err("Informe o nome do alimento.".into());
-        }
-        let minimum = minimum
-            .trim()
-            .parse::<i64>()
+    pub fn add_food(&mut self, name: &str, minimum: &str, unit: &str, unit_grams: &str) -> R<()> {
+        let actor = self.require(&["Estoque"])?;
+        let min = crate::validation::integer(minimum)
             .map_err(|_| "O mínimo deve ser um número inteiro de gramas.".to_string())?;
-        if minimum < 0 {
-            return Err("O mínimo não pode ser negativo.".into());
+        let conversion = crate::validation::integer(unit_grams)
+            .map_err(|_| "Informe quantos gramas equivalem a uma unidade.".to_string())?;
+        if name.trim().is_empty()
+            || !(0..=1_000_000_000).contains(&min)
+            || conversion <= 0
+            || !["g", "kg", "L", "mL", "cx", "un"].contains(&unit)
+        {
+            return Err("Informe nome e mínimo entre 0 e 1.000.000.000 g.".into());
         }
-        self.c
-            .execute(
-                "INSERT INTO items(name,minimum) VALUES (?,?)",
-                params![name.trim(), minimum],
-            )
-            .map_err(sql)?;
-        Ok(())
+        let t = self.c.transaction().map_err(sql)?;
+        t.execute(
+            "INSERT INTO items(name,minimum,unit,unit_grams) VALUES (?,?,?,?)",
+            params![name.trim(), min, unit, conversion],
+        )
+        .map_err(sql)?;
+        audit(
+            &t,
+            Some(actor),
+            "CADASTRAR_ALIMENTO",
+            "items",
+            &format!("id={}; nome={name}; mínimo={min} g equivalentes; unidade={unit}; conversão={conversion} g/unidade", t.last_insert_rowid()),
+        )?;
+        t.commit().map_err(sql)
     }
-
     pub fn ingredients(&self, recipe: i64) -> R<Vec<Ingredient>> {
-        let mut s = self.c.prepare("SELECT i.id,i.name,g.grams FROM ingredients g JOIN items i ON i.id=g.item WHERE g.recipe=? ORDER BY i.name").map_err(sql)?;
+        self.require(&[])?;
+        let mut s=self.c.prepare("SELECT i.id,i.name,g.grams FROM ingredients g JOIN items i ON i.id=g.item WHERE g.recipe=? ORDER BY i.name").map_err(sql)?;
         let rows = s
             .query_map([recipe], |r| {
                 Ok(Ingredient {
@@ -54,24 +63,50 @@ impl Db {
             .map_err(sql)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(sql)
     }
-    pub fn save_ingredient(&self, recipe: i64, item: i64, grams: i64) -> R<()> {
-        if recipe == 0 || item == 0 {
-            return Err("Selecione a receita e o ingrediente.".into());
+    pub fn save_ingredient(&mut self, recipe: i64, item: i64, grams: i64) -> R<()> {
+        let actor = self.require(&["Nutricionista"])?;
+        if recipe == 0 || item == 0 || grams <= 0 || grams > 1_000_000 {
+            return Err(
+                "Selecione receita, ingrediente e peso entre 1 e 1.000.000 g por porção.".into(),
+            );
         }
-        self.c.execute("INSERT INTO ingredients(recipe,item,grams) VALUES (?,?,?) ON CONFLICT(recipe,item) DO UPDATE SET grams=excluded.grams",params![recipe,item,grams]).map_err(sql)?;
-        Ok(())
-    }
-    pub fn remove_ingredient(&self, recipe: i64, item: i64) -> R<()> {
-        self.c
-            .execute(
-                "DELETE FROM ingredients WHERE recipe=? AND item=?",
-                params![recipe, item],
-            )
+        let t = self.c.transaction().map_err(sql)?;
+        t.execute("INSERT INTO ingredients(recipe,item,grams) VALUES (?,?,?) ON CONFLICT(recipe,item) DO UPDATE SET grams=excluded.grams",params![recipe,item,grams]).map_err(sql)?;
+        t.execute("UPDATE recipes SET approved_card=NULL WHERE id=?", [recipe])
             .map_err(sql)?;
-        Ok(())
+        audit(
+            &t,
+            Some(actor),
+            "ALTERAR_INGREDIENTE",
+            "recipes",
+            &format!(
+                "receita={recipe}; item={item}; gramas={grams}; aprovação anterior invalidada"
+            ),
+        )?;
+        t.commit().map_err(sql)
+    }
+    pub fn remove_ingredient(&mut self, recipe: i64, item: i64) -> R<()> {
+        let actor = self.require(&["Nutricionista"])?;
+        let t = self.c.transaction().map_err(sql)?;
+        t.execute(
+            "DELETE FROM ingredients WHERE recipe=? AND item=?",
+            params![recipe, item],
+        )
+        .map_err(sql)?;
+        t.execute("UPDATE recipes SET approved_card=NULL WHERE id=?", [recipe])
+            .map_err(sql)?;
+        audit(
+            &t,
+            Some(actor),
+            "REMOVER_INGREDIENTE",
+            "recipes",
+            &format!("receita={recipe}; item={item}; aprovação anterior invalidada"),
+        )?;
+        t.commit().map_err(sql)
     }
     pub fn movements(&self) -> R<Vec<Movement>> {
-        let mut s=self.c.prepare("SELECT m.date,i.name,m.grams,m.note FROM movements m JOIN items i ON i.id=m.item ORDER BY m.id DESC LIMIT 50").map_err(sql)?;
+        self.require(&[])?;
+        let mut s=self.c.prepare("SELECT m.date,i.name,m.grams,m.note,i.unit,i.unit_grams FROM movements m JOIN items i ON i.id=m.item ORDER BY m.id DESC LIMIT 50").map_err(sql)?;
         let rows = s
             .query_map([], |r| {
                 Ok(Movement {
@@ -79,13 +114,16 @@ impl Db {
                     food: r.get(1)?,
                     grams: r.get(2)?,
                     note: r.get(3)?,
+                    unit: r.get(4)?,
+                    unit_grams: r.get(5)?,
                 })
             })
             .map_err(sql)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(sql)
     }
     pub fn servings(&self) -> R<Vec<Serving>> {
-        let mut s=self.c.prepare("SELECT v.date,s.name,r.name,v.portions FROM servings v JOIN schools s ON s.id=v.school JOIN recipes r ON r.id=v.recipe ORDER BY v.id DESC LIMIT 50").map_err(sql)?;
+        self.require(&[])?;
+        let mut s=self.c.prepare("SELECT date,school,recipe,portions FROM (SELECT v.date,s.name school,r.name recipe,v.portions,v.id sort FROM servings v JOIN schools s ON s.id=v.school JOIN recipes r ON r.id=v.recipe UNION ALL SELECT o.date,s.name,r.name,-v.portions,o.id FROM operations o JOIN servings v ON v.operation_id=o.reversal_of JOIN schools s ON s.id=v.school JOIN recipes r ON r.id=v.recipe) ORDER BY date DESC,sort DESC LIMIT 50").map_err(sql)?;
         let rows = s
             .query_map([], |r| {
                 Ok(Serving {
@@ -98,16 +136,13 @@ impl Db {
             .map_err(sql)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(sql)
     }
-    pub fn portions_on(&self, date: &str) -> R<i64> {
-        self.c
-            .query_row(
-                "SELECT COALESCE(SUM(portions),0) FROM servings WHERE date=?",
-                [date],
-                |r| r.get(0),
-            )
-            .map_err(sql)
+    pub fn portions_on(&self, day: &str) -> R<i64> {
+        self.require(&[])?;
+        let day = crate::validation::iso_date(day)?;
+        self.c.query_row("SELECT (SELECT COALESCE(SUM(portions),0) FROM servings WHERE date=?1)-(SELECT COALESCE(SUM(v.portions),0) FROM operations o JOIN servings v ON v.operation_id=o.reversal_of WHERE o.date=?1)",[day],|r|r.get(0)).map_err(sql)
     }
     pub fn backup(&self, path: &std::path::Path) -> R<()> {
+        self.require(&["Administrador"])?;
         self.c
             .backup(rusqlite::DatabaseName::Main, path, None)
             .map_err(sql)

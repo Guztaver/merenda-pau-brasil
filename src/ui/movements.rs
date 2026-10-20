@@ -1,65 +1,37 @@
 use super::{components::*, theme::*};
-use crate::{
-    app::App,
-    validation::{grams, kg},
-};
+use crate::{app::App, validation::measured_grams};
 use eframe::egui::{self, RichText};
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    card(
-        ui,
-        "Nova movimentação",
-        "Recebimentos e perdas podem ser registrados com datas anteriores.",
-        |ui| {
-            ui.horizontal_wrapped(|ui| {
-                if mode_option(ui, "Entrada de alimentos", !app.movements.loss) {
-                    app.movements.loss = false;
-                }
-                if mode_option(ui, "Perda ou ajuste de saída", app.movements.loss) {
-                    app.movements.loss = true;
-                }
-            });
-            ui.columns(2, |cols| {
-                field(&mut cols[0], "Data (AAAA-MM-DD)", &mut app.movements.day);
-                choose(
-                    &mut cols[1],
-                    "Alimento",
-                    "movement_food",
-                    &mut app.movements.item,
-                    app.db.names("items"),
-                );
-            });
-            ui.columns(2, |cols| {
-                field(&mut cols[0], "Peso total (g)", &mut app.movements.weight);
-                field(
-                    &mut cols[1],
-                    "Origem, documento ou justificativa",
-                    &mut app.movements.note,
-                );
-            });
-            hint(
-                ui,
-                "Consumo de refeições deve ser lançado em Refeições servidas.",
-            );
-            if primary(
-                ui,
-                if app.movements.loss {
-                    "Registrar saída"
-                } else {
-                    "+  Registrar entrada"
-                },
-            ) {
-                let f = &app.movements;
-                let r = grams(&f.weight).and_then(|g| {
-                    app.db
-                        .movement(&f.day, f.item, if f.loss { -g } else { g }, &f.note)
-                });
-                if app.notify(r) {
-                    app.movements.weight.clear();
-                    app.movements.note.clear();
-                }
+    let show_errors = app.notice.as_ref().is_some_and(|notice| notice.error);
+    ui.horizontal_wrapped(|ui| {
+        if mode_option(ui, "Entrada de alimentos", !app.movements.loss) {
+            app.movements.loss = false;
+        }
+        if mode_option(ui, "Perda ou ajuste de saída", app.movements.loss) {
+            app.movements.loss = true;
+        }
+    });
+    if !app.movements.loss {
+        super::purchases::receive_form(app, ui);
+    } else {
+        card(ui,"Registrar perda ou descarte","A saída deve identificar o lote e a justificativa. Lotes vencidos podem ser descartados, mas não consumidos em refeições.",|ui|{
+            required_field(ui,"Data da saída (DD/MM/AAAA)",&mut app.movements.day,show_errors);
+            let available_lots=app.db.lots(&app.movements.day).unwrap_or_default();
+            let lots=available_lots.iter().filter(|l|l.balance>0).map(|l|(l.id,format!("{} • {} • {} {} • vence {}",l.label,l.location,display_quantity(l.balance,l.unit_grams),l.unit,pretty_date(&l.expiry)))).collect();
+            required_choose(ui,"Lote","loss_lot",&mut app.movements.lot,lots,show_errors);
+            let measure=available_lots.iter().find(|l|l.id==app.movements.lot).map(|l|(l.unit.clone(),l.unit_grams)).unwrap_or_else(||("g".into(),1));
+            required_field(ui,&format!("Quantidade da perda ({})",measure.0),&mut app.movements.weight,show_errors);required_multiline(ui,"Justificativa e documento de descarte",&mut app.movements.note,show_errors);
+            if primary(ui,"Registrar saída justificada"){
+                let f=&app.movements;let r=measured_grams(&f.weight,measure.1).and_then(|g|app.db.loss(&f.day,f.lot,g,&f.note));if app.notify(r){app.movements.weight.clear();app.movements.note.clear();}
             }
-        },
-    );
+            ui.add_space(10.);
+            ui.horizontal_wrapped(|ui|{
+                hint(ui,"Atalhos de cadastro");
+                if ui.button("+ Cadastrar alimento / material").clicked(){app.navigate(crate::app::Page::Foods);}
+                else if ui.button("Consultar lotes e validades").clicked(){app.navigate(crate::app::Page::Lots);}
+            });
+        });
+    }
     ui.add_space(18.);
     card(
         ui,
@@ -93,9 +65,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                     ui.colored_label(
                                         if r.grams > 0 { GREEN } else { AMBER },
                                         format!(
-                                            "{}{} kg",
-                                            if r.grams > 0 { "+" } else { "" },
-                                            kg(r.grams)
+                                            "{}{} {}",
+                                            if r.grams > 0 { "+" } else { "−" },
+                                            display_quantity(r.grams.abs(), r.unit_grams),
+                                            r.unit
                                         ),
                                     );
                                     ui.label(r.note);
