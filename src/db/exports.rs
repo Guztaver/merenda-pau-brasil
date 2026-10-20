@@ -103,6 +103,22 @@ impl Db {
         let actor = self.require(&["Estoque", "Nutricionista"])?;
         let table = match entity {
             "Operação" => "operations",
+            "Fornecedor familiar" => {
+                self.require(&["Administrador"])?;
+                let family: bool = self
+                    .c
+                    .query_row("SELECT family FROM suppliers WHERE id=?", [id], |r| {
+                        r.get(0)
+                    })
+                    .map_err(sql)?;
+                if !family {
+                    return Err(
+                        "Anexos desta seção exigem fornecedor marcado como agricultura familiar."
+                            .into(),
+                    );
+                }
+                "suppliers"
+            }
             "Ficha técnica" => {
                 self.require_rt()?;
                 "technical_cards"

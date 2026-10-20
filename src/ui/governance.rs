@@ -50,8 +50,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         _ => {
             card(ui,"Anexar documento comprobatório","O arquivo é copiado para a pasta local dos dados, com hash SHA-256 e responsável. O original permanece no lugar.",|ui|{
-                options(ui,"Vincular a","document_entity",&mut app.compliance.document_entity,&["Operação","Ficha técnica","Cardápio"]);
-                field(ui,"ID do registro (operações listadas na aba de estornos)",&mut app.compliance.document_id);field(ui,"Caminho completo do arquivo (PDF, XML, imagem, TXT, CSV ou DOCX)",&mut app.compliance.document_path);
+                options(ui,"Vincular a","document_entity",&mut app.compliance.document_entity,&["Operação","Fornecedor familiar","Ficha técnica","Cardápio"]);
+                field(ui,"ID do registro (fornecedor na aba Compras, ou operação listada em Estornos)",&mut app.compliance.document_id);field(ui,"Caminho completo do arquivo (PDF, XML, imagem, TXT, CSV ou DOCX)",&mut app.compliance.document_path);
                 if primary(ui,"Copiar e vincular documento"){
                     let f=&app.compliance;let r=f.document_id.parse::<i64>().map_err(|_|"Informe um ID inteiro.".to_string()).and_then(|id|app.db.attach_document(&f.document_entity,id,std::path::Path::new(&f.document_path),&app.dir));if app.notify(r){app.compliance.document_path.clear();}
                 }
