@@ -19,12 +19,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.columns(2, |cols| {
                 field(
                     &mut cols[0],
-                    "Data inicial (AAAA-MM-DD)",
+                    "Data inicial (DD/MM/AAAA)",
                     &mut app.reports.start,
                 );
                 field(
                     &mut cols[1],
-                    "Data final (AAAA-MM-DD)",
+                    "Data final (DD/MM/AAAA)",
                     &mut app.reports.end,
                 );
             });

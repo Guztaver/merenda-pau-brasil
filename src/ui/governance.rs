@@ -25,7 +25,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(16.);
             card(ui,"Gerenciar acesso","A desativação mantém o histórico. Trocas de senha e alterações de acesso ficam na auditoria.",|ui|{
                 match app.db.users(){Err(e)=>hint(ui,&e),Ok(users)=>{
-                    for(_,name,role,active)in &users{ui.label(format!("{name} • {role} • {}",if *active{"Ativo"}else{"Inativo"}));}
+                    egui::ScrollArea::horizontal().id_salt("users_table_scroll").show(ui,|ui|{egui::Grid::new("users_table").min_col_width(100.).spacing([22.,10.]).striped(true).show(ui,|ui|{
+                        for h in ["USUÁRIO","PERFIL","SITUAÇÃO"]{ui.label(egui::RichText::new(h).size(11.).strong());}ui.end_row();
+                        for(_,name,role,active)in &users{ui.strong(name);ui.label(role);badge(ui,if *active{"Ativo"}else{"Inativo"},!*active);ui.end_row();}
+                    });});
                     choose(ui,"Usuário","manage_user",&mut app.compliance.user_id,users.into_iter().map(|(id,name,_,_)|(id,name)).collect());
                 }}
                 field(ui,"Justificativa da alteração",&mut app.compliance.user_reason);
@@ -38,12 +41,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             card(ui,"Fechamento de competências","O administrador pode fechar ou reabrir um mês. Lançamentos em competências fechadas são bloqueados no banco.",|ui|{
                 field(ui,"Competência (AAAA-MM)",&mut app.compliance.period);field(ui,"Justificativa do fechamento / reabertura",&mut app.compliance.period_reason);
                 ui.horizontal_wrapped(|ui|{for(closed,label)in [(true,"Fechar competência"),(false,"Reabrir com justificativa")]{if ui.button(label).clicked(){let f=&app.compliance;let r=app.db.set_period(&f.period,closed,&f.period_reason);app.notify(r);}}});
-                match app.db.periods(){Ok(rows)=>{for r in rows{ui.label(r);}},Err(e)=>hint(ui,&e)}
+                match app.db.periods(){Ok(rows)=>{if !rows.is_empty(){egui::ScrollArea::horizontal().id_salt("periods_table_scroll").show(ui,|ui|{egui::Grid::new("periods_table").min_col_width(100.).spacing([22.,10.]).striped(true).show(ui,|ui|{
+                    for h in ["COMPETÊNCIA","SITUAÇÃO","JUSTIFICATIVA"]{ui.label(egui::RichText::new(h).size(11.).strong());}ui.end_row();
+                    for(month,closed,reason)in rows{ui.label(month);badge(ui,if closed{"Fechada"}else{"Aberta"},closed);ui.label(reason);ui.end_row();}
+                });});}},Err(e)=>hint(ui,&e)}
             });
             ui.add_space(16.);
             card(ui,"Estorno justificado","Não apaga o original. Cria a contrapartida na data escolhida e preserva o vínculo com a operação inicial.",|ui|{
                 choose(ui,"Operação ainda não estornada","reversal_op",&mut app.compliance.operation,app.db.operations().unwrap_or_default());
-                field(ui,"Data do estorno (AAAA-MM-DD)",&mut app.compliance.reversal_day);multiline(ui,"Motivo do estorno",&mut app.compliance.reversal_reason);
+                field(ui,"Data do estorno (DD/MM/AAAA)",&mut app.compliance.reversal_day);multiline(ui,"Motivo do estorno",&mut app.compliance.reversal_reason);
                 hint(ui,"O estorno de uma entrada ou transferência será recusado se faltar saldo. Para estornar recebimentos pagos, estorne os pagamentos primeiro. Uma correção de mês fechado pode ser registrada como estorno em mês aberto, sem reescrever o histórico.");
                 if primary(ui,"Registrar estorno") {let f=&app.compliance;let r=app.db.reverse(f.operation,&f.reversal_day,&f.reversal_reason);if app.notify(r){app.compliance.reversal_reason.clear();}}
             });

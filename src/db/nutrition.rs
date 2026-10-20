@@ -50,10 +50,17 @@ pub struct MenuInput {
     pub planned: i64,
     pub supersedes: Option<i64>,
 }
+pub struct MenuRow {
+    pub id: i64,
+    pub date: String,
+    pub school: String,
+    pub meal: String,
+    pub portions: i64,
+}
 impl Db {
     pub fn menu_choices(&self, school: i64, day: &str) -> R<Vec<(i64, String)>> {
         self.require(&[])?;
-        crate::validation::date(day)?;
+        let day = crate::validation::iso_date(day)?;
         let mut s=self.c.prepare("SELECT m.id,m.meal,r.name FROM menus m JOIN technical_cards c ON c.id=m.card JOIN recipes r ON r.id=c.recipe WHERE m.school=? AND m.date=? AND NOT EXISTS(SELECT 1 FROM menus n WHERE n.supersedes=m.id) ORDER BY m.meal").map_err(sql)?;
         let rows = s
             .query_map(params![school, day], |r| {
@@ -193,7 +200,7 @@ impl Db {
     }
     pub fn approve_menu(&mut self, f: &MenuInput) -> R<()> {
         let rt = self.require_rt()?;
-        crate::validation::date(&f.day)?;
+        let day = crate::validation::iso_date(&f.day)?;
         let card = self.card(f.card)?;
         if f.age_group.trim() != card.age_group.trim()
             || f.diet.trim() != card.diet.trim()
@@ -209,7 +216,7 @@ impl Db {
         let current: Option<i64> = {
             let mut s=t.prepare("SELECT m.id FROM menus m WHERE school=? AND date=? AND meal=? AND NOT EXISTS(SELECT 1 FROM menus n WHERE n.supersedes=m.id)").map_err(sql)?;
             let rows = s
-                .query_map(params![f.school, f.day, f.meal.trim()], |r| {
+                .query_map(params![f.school, day, f.meal.trim()], |r| {
                     r.get::<_, i64>(0)
                 })
                 .map_err(sql)?;
@@ -222,12 +229,12 @@ impl Db {
             return Err("Já existe cardápio para essa escola/data/refeição. Informe o ID atual para substituí-lo mantendo o histórico.".into());
         }
         if let Some(id) = f.supersedes {
-            let matches:bool=t.query_row("SELECT EXISTS(SELECT 1 FROM menus WHERE id=? AND school=? AND date=? AND meal=?)",params![id,f.school,f.day,f.meal.trim()],|r|r.get(0)).map_err(sql)?;
+            let matches:bool=t.query_row("SELECT EXISTS(SELECT 1 FROM menus WHERE id=? AND school=? AND date=? AND meal=?)",params![id,f.school,day,f.meal.trim()],|r|r.get(0)).map_err(sql)?;
             if !matches {
                 return Err("O ID substituído não corresponde ao cardápio informado.".into());
             }
         }
-        t.execute("INSERT INTO menus(school,date,meal,age_group,diet,card,planned,snapshot,actor,stamp,supersedes) VALUES (?,?,?,?,?,?,?,?,?,?,?)",params![f.school,f.day,f.meal.trim(),f.age_group,f.diet,f.card,f.planned,snapshot,rt.id,stamp(),f.supersedes]).map_err(sql)?;
+        t.execute("INSERT INTO menus(school,date,meal,age_group,diet,card,planned,snapshot,actor,stamp,supersedes) VALUES (?,?,?,?,?,?,?,?,?,?,?)",params![f.school,day,f.meal.trim(),f.age_group,f.diet,f.card,f.planned,snapshot,rt.id,stamp(),f.supersedes]).map_err(sql)?;
         audit(
             &t,
             Some(rt.id),
@@ -237,7 +244,7 @@ impl Db {
                 "id={}; escola={}; data={}; refeição={}; ficha={}; substitui={:?}",
                 t.last_insert_rowid(),
                 f.school,
-                f.day,
+                day,
                 f.meal,
                 f.card,
                 f.supersedes
@@ -245,23 +252,20 @@ impl Db {
         )?;
         t.commit().map_err(sql)
     }
-    pub fn menus(&self, start: &str, end: &str) -> R<Vec<(i64, String)>> {
+    pub fn menus(&self, start: &str, end: &str) -> R<Vec<MenuRow>> {
         self.require(&[])?;
-        crate::validation::date(start)?;
-        crate::validation::date(end)?;
+        let start = crate::validation::iso_date(start)?;
+        let end = crate::validation::iso_date(end)?;
         let mut s=self.c.prepare("SELECT m.id,m.date,s.name,m.meal,m.planned FROM menus m JOIN schools s ON s.id=m.school WHERE date BETWEEN ? AND ? AND NOT EXISTS(SELECT 1 FROM menus n WHERE n.supersedes=m.id) ORDER BY m.date,m.meal").map_err(sql)?;
         let rows = s
             .query_map(params![start, end], |r| {
-                Ok((
-                    r.get(0)?,
-                    format!(
-                        "{} • {} • {} • {} porções",
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, i64>(4)?
-                    ),
-                ))
+                Ok(MenuRow {
+                    id: r.get(0)?,
+                    date: r.get(1)?,
+                    school: r.get(2)?,
+                    meal: r.get(3)?,
+                    portions: r.get(4)?,
+                })
             })
             .map_err(sql)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(sql)

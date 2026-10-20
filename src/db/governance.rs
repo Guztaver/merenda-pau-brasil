@@ -6,7 +6,7 @@ use super::{
 use crate::validation::{date, sql, R};
 use rusqlite::{params, Connection, OptionalExtension};
 pub(super) fn unlocked(c: &Connection, day: &str) -> R<()> {
-    date(day)?;
+    let day = crate::validation::iso_date(day)?;
     let closed: bool = c
         .query_row(
             "SELECT COALESCE((SELECT closed FROM periods WHERE month=?),0)",
@@ -24,7 +24,8 @@ pub(super) fn unlocked(c: &Connection, day: &str) -> R<()> {
 }
 pub(super) fn open_date(c: &Connection, day: &str) -> R<()> {
     unlocked(c, day)?;
-    if day > chrono::Local::now().format("%Y-%m-%d").to_string().as_str() {
+    let day = crate::validation::iso_date(day)?;
+    if day > chrono::Local::now().format("%Y-%m-%d").to_string() {
         return Err(
             "Lançamentos realizados não podem ter data futura. Use Cardápios para planejar.".into(),
         );
@@ -56,25 +57,14 @@ impl Db {
         )?;
         t.commit().map_err(sql)
     }
-    pub fn periods(&self) -> R<Vec<String>> {
+    pub fn periods(&self) -> R<Vec<(String, bool, String)>> {
         self.require(&[])?;
         let mut s = self
             .c
             .prepare("SELECT month,closed,reason FROM periods ORDER BY month DESC")
             .map_err(sql)?;
         let rows = s
-            .query_map([], |r| {
-                Ok(format!(
-                    "{} • {} • {}",
-                    r.get::<_, String>(0)?,
-                    if r.get::<_, bool>(1)? {
-                        "Fechada"
-                    } else {
-                        "Aberta"
-                    },
-                    r.get::<_, String>(2)?
-                ))
-            })
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .map_err(sql)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(sql)
     }
@@ -100,6 +90,7 @@ impl Db {
     }
     pub fn reverse(&mut self, original: i64, day: &str, reason: &str) -> R<()> {
         let actor = self.require(&["Administrador"])?;
+        let day = crate::validation::iso_date(day)?;
         if reason.trim().len() < 5 {
             return Err("Informe a justificativa do estorno com pelo menos 5 caracteres.".into());
         }
@@ -111,7 +102,7 @@ impl Db {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .map_err(sql)?;
-        if reversed.is_some() || day < original_day.as_str() {
+        if reversed.is_some() || day.as_str() < original_day.as_str() {
             return Err(
                 "Não é permitido estornar um estorno nem usar data anterior à operação original."
                     .into(),
@@ -135,11 +126,11 @@ impl Db {
                 );
             }
             let last_payment:String=t.query_row("SELECT COALESCE(MAX(o.date),'') FROM operations o JOIN payments p ON p.operation_id=COALESCE(o.reversal_of,o.id) JOIN receipts r ON r.id=p.receipt WHERE r.operation_id=?",[original],|r|r.get(0)).map_err(sql)?;
-            if day < last_payment.as_str() {
+            if day.as_str() < last_payment.as_str() {
                 return Err("A data de estorno do recebimento deve ser igual ou posterior aos estornos de seus pagamentos.".into());
             }
         }
-        open_date(&t, day)?;
+        open_date(&t, &day)?;
         t.execute(
             "INSERT INTO operations(kind,date,actor,reason,reversal_of) VALUES ('ESTORNO',?,?,?,?)",
             params![day, actor, reason.trim(), original],
@@ -162,7 +153,7 @@ impl Db {
             q.collect::<Result<Vec<_>, _>>().map_err(sql)?
         };
         for (item, lot, g) in rows {
-            movement(&t, op, day, item, lot, -g, reason, None)?;
+            movement(&t, op, &day, item, lot, -g, reason, None)?;
         }
         if kind == "PAGAMENTO" {
             let receipt: i64 = t
@@ -193,7 +184,7 @@ impl Db {
         reason: &str,
     ) -> R<()> {
         let actor = self.require(&["Administrador"])?;
-        date(expiry)?;
+        let expiry = crate::validation::iso_date(expiry)?;
         if [invoice, batch, reason].iter().any(|s| s.trim().is_empty()) {
             return Err("Informe fornecedor, documento histórico, lote, validade conferida e justificativa.".into());
         }

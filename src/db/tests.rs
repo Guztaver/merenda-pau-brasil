@@ -4,6 +4,19 @@ use crate::validation::{date, grams};
 #[test]
 fn input_validation() {
     assert!(date("2026-02-30").is_err());
+    assert!(date("31/02/2026").is_err());
+    assert_eq!(
+        crate::validation::iso_date("20/10/2026").unwrap(),
+        "2026-10-20"
+    );
+    assert_eq!(
+        crate::validation::measured_grams("5.000,5", 2).unwrap(),
+        10_001
+    );
+    assert_eq!(grams("5.000.000").unwrap(), 5_000_000);
+    assert_eq!(crate::validation::integer("5.000").unwrap(), 5_000);
+    assert_eq!(crate::validation::money("R$ 1.000,00").unwrap(), 100_000);
+    assert!(super::purchasing::document_valid("529.982.247-25"));
     assert!(grams("NaN").is_err());
     assert!(grams("0").is_err());
     assert_eq!(grams("100,5").unwrap(), 101);
@@ -50,7 +63,7 @@ fn legacy_database_migrates_without_dropping_existing_inventory() {
     assert_eq!(
         db.c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        3
+        4
     );
     assert_eq!(
         db.c.query_row("SELECT grams FROM movements WHERE item=1", [], |r| r
@@ -64,6 +77,44 @@ fn legacy_database_migrates_without_dropping_existing_inventory() {
             .unwrap(),
         1
     );
+}
+
+#[test]
+fn v3_migration_preserves_supplier_snapshot_and_adds_item_units() {
+    let c = Connection::open_in_memory().unwrap();
+    c.execute_batch(include_str!("schema.sql")).unwrap();
+    c.execute_batch(include_str!("migration_v2.sql")).unwrap();
+    c.execute_batch("CREATE TRIGGER immutable_receipts_update BEFORE UPDATE ON receipts BEGIN SELECT RAISE(ABORT,'Registro imutável.'); END;").unwrap();
+    c.execute_batch(include_str!("migration_v3.sql")).unwrap();
+    c.execute("INSERT INTO users(id,name,login,password_hash,role,crn) VALUES(1,'Admin','admin','x','Administrador','')",[]).unwrap();
+    c.execute("INSERT INTO items(id,name,minimum) VALUES(1,'Arroz',0)", [])
+        .unwrap();
+    c.execute("INSERT INTO suppliers(id,name,document,family,caf,verified) VALUES(1,'Fornecedor antigo','52998224725',1,'CAF-1',1)",[]).unwrap();
+    c.execute("INSERT INTO operations(id,kind,date,actor,reason) VALUES(1,'RECEBIMENTO','2026-01-10',1,'NF-1')",[]).unwrap();
+    c.execute("INSERT INTO receipts(id,supplier,item,invoice,process,contract,method,funding,category,grams,cents,operation_id) VALUES(1,1,1,'NF-1','PROC','CONT','Pregão','Próprios','In natura/minimamente processado',1000,100,1)",[]).unwrap();
+    let db = Db::init(c).unwrap();
+    assert!(db
+        .c
+        .query_row("SELECT supplier_family FROM receipts WHERE id=1", [], |r| r
+            .get::<_, bool>(0))
+        .unwrap());
+    assert_eq!(db.c.query_row("SELECT supplier_name||':'||supplier_document||':'||supplier_caf FROM receipts WHERE id=1",[],|r|r.get::<_,String>(0)).unwrap(),"Fornecedor antigo:52998224725:CAF-1");
+    assert_eq!(
+        db.c.query_row(
+            "SELECT unit||':'||unit_grams FROM items WHERE id=1",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        "g:1"
+    );
+    assert!(db
+        .c
+        .execute(
+            "UPDATE receipts SET supplier_name='alterado' WHERE id=1",
+            []
+        )
+        .is_err());
 }
 
 #[test]

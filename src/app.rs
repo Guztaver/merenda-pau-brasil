@@ -93,6 +93,8 @@ impl Page {
 pub struct FoodForm {
     pub name: String,
     pub minimum: String,
+    pub unit: String,
+    pub unit_grams: String,
     pub day: String,
     pub search: String,
 }
@@ -144,7 +146,7 @@ pub struct App {
 }
 impl App {
     pub fn new(db: Db, dir: PathBuf) -> Self {
-        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today = Local::now().format("%d/%m/%Y").to_string();
         Self {
             db,
             dir,
@@ -152,6 +154,8 @@ impl App {
             notice: None,
             foods: FoodForm {
                 minimum: "0".into(),
+                unit: "kg".into(),
+                unit_grams: "1000".into(),
                 day: today.clone(),
                 ..Default::default()
             },
@@ -165,7 +169,7 @@ impl App {
                 ..Default::default()
             },
             reports: ReportForm {
-                start: Local::now().format("%Y-%m-01").to_string(),
+                start: Local::now().format("01/%m/%Y").to_string(),
                 end: today,
             },
             school_name: String::new(),
@@ -199,10 +203,12 @@ impl App {
         self.compliance = Default::default();
         self.notice = None;
         self.page = Page::Dashboard;
-        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today = Local::now().format("%d/%m/%Y").to_string();
         self.foods = FoodForm {
             day: today.clone(),
             minimum: "0".into(),
+            unit: "kg".into(),
+            unit_grams: "1000".into(),
             ..Default::default()
         };
         self.movements = MovementForm {

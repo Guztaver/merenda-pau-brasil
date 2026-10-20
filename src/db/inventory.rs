@@ -1,5 +1,5 @@
 use super::{security::audit, Db};
-use crate::validation::{date, sql, R};
+use crate::validation::{sql, R};
 use rusqlite::{params, Connection};
 #[derive(Clone)]
 pub struct Lot {
@@ -9,6 +9,8 @@ pub struct Lot {
     pub legacy: bool,
     pub expiry: String,
     pub location: String,
+    pub unit: String,
+    pub unit_grams: i64,
 }
 pub(super) fn available(c: &Connection, lot: i64, day: &str) -> R<i64> {
     let mut s = c
@@ -65,20 +67,25 @@ pub(super) fn movement(
     check_history(c, lot)
 }
 impl Db {
-    pub fn stock(&self, day: &str) -> Vec<(String, i64, i64)> {
-        if self.require(&[]).is_err() || date(day).is_err() {
+    pub fn stock(&self, day: &str) -> Vec<(String, i64, i64, String, i64)> {
+        let Ok(day) = crate::validation::iso_date(day) else {
+            return Vec::new();
+        };
+        if self.require(&[]).is_err() {
             return Vec::new();
         }
-        let Ok(mut s)=self.c.prepare("SELECT i.name,COALESCE(SUM(CASE WHEN m.date<=? THEN m.grams ELSE 0 END),0),i.minimum FROM items i LEFT JOIN movements m ON m.item=i.id GROUP BY i.id ORDER BY i.name")else{return Vec::new()};
-        let Ok(rows) = s.query_map([day], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))) else {
+        let Ok(mut s)=self.c.prepare("SELECT i.name,COALESCE(SUM(CASE WHEN m.date<=? THEN m.grams ELSE 0 END),0),i.minimum,i.unit,i.unit_grams FROM items i LEFT JOIN movements m ON m.item=i.id GROUP BY i.id ORDER BY i.name")else{return Vec::new()};
+        let Ok(rows) = s.query_map([day], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        }) else {
             return Vec::new();
         };
         rows.filter_map(Result::ok).collect()
     }
     pub fn lots(&self, day: &str) -> R<Vec<Lot>> {
         self.require(&[])?;
-        date(day)?;
-        let mut s=self.c.prepare("SELECT l.id,l.item,i.name,l.batch,l.location,l.legacy,COALESCE(l.expiry,''),COALESCE(SUM(CASE WHEN m.date<=? THEN m.grams ELSE 0 END),0) FROM lots l JOIN items i ON i.id=l.item LEFT JOIN movements m ON m.lot_id=l.id GROUP BY l.id ORDER BY l.expiry,l.id").map_err(sql)?;
+        let day = crate::validation::iso_date(day)?;
+        let mut s=self.c.prepare("SELECT l.id,l.item,i.name,l.batch,l.location,l.legacy,COALESCE(l.expiry,''),COALESCE(SUM(CASE WHEN m.date<=? THEN m.grams ELSE 0 END),0),i.unit,i.unit_grams FROM lots l JOIN items i ON i.id=l.item LEFT JOIN movements m ON m.lot_id=l.id GROUP BY l.id ORDER BY l.expiry,l.id").map_err(sql)?;
         let rows = s
             .query_map([day], |r| {
                 Ok(Lot {
@@ -93,6 +100,8 @@ impl Db {
                     legacy: r.get(5)?,
                     expiry: r.get(6)?,
                     balance: r.get(7)?,
+                    unit: r.get(8)?,
+                    unit_grams: r.get(9)?,
                 })
             })
             .map_err(sql)?;
@@ -100,6 +109,7 @@ impl Db {
     }
     pub fn loss(&mut self, day: &str, lot: i64, grams: i64, reason: &str) -> R<()> {
         let actor = self.require(&["Estoque"])?;
+        let day = crate::validation::iso_date(day)?;
         if grams <= 0 || grams > 1_000_000_000 || reason.trim().is_empty() {
             return Err("Informe peso positivo e justificativa da saída.".into());
         }
@@ -107,8 +117,8 @@ impl Db {
         let item: i64 = t
             .query_row("SELECT item FROM lots WHERE id=?", [lot], |r| r.get(0))
             .map_err(sql)?;
-        let op = Self::operation(&t, actor, "PERDA", day, reason)?;
-        movement(&t, op, day, item, lot, -grams, reason, None)?;
+        let op = Self::operation(&t, actor, "PERDA", &day, reason)?;
+        movement(&t, op, &day, item, lot, -grams, reason, None)?;
         audit(
             &t,
             Some(actor),
@@ -127,6 +137,7 @@ impl Db {
         reason: &str,
     ) -> R<()> {
         let actor = self.require(&["Estoque"])?;
+        let day = crate::validation::iso_date(day)?;
         if grams <= 0 || grams > 1_000_000_000 || reason.trim().is_empty() {
             return Err("Informe o peso e a justificativa da transferência.".into());
         }
@@ -141,10 +152,10 @@ impl Db {
             format!("escola:{school}")
         };
         let (item,receipt,batch,expiry,location,legacy):(i64,Option<i64>,String,String,String,bool)=t.query_row("SELECT item,receipt,batch,COALESCE(expiry,''),location,legacy FROM lots WHERE id=?",[lot],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(sql)?;
-        if location == target || legacy || expiry.as_str() < day {
+        if location == target || legacy || expiry.as_str() < day.as_str() {
             return Err("Selecione outro destino e um lote rastreável dentro da validade.".into());
         }
-        let op = Self::operation(&t, actor, "TRANSFERENCIA", day, reason)?;
+        let op = Self::operation(&t, actor, "TRANSFERENCIA", &day, reason)?;
         t.execute(
             "INSERT INTO lots(item,receipt,batch,expiry,location,parent) VALUES (?,?,?,?,?,?)",
             params![item, receipt, batch, expiry, target, lot],
@@ -154,7 +165,7 @@ impl Db {
         movement(
             &t,
             op,
-            day,
+            &day,
             item,
             lot,
             -grams,
@@ -164,7 +175,7 @@ impl Db {
         movement(
             &t,
             op,
-            day,
+            &day,
             item,
             destination,
             grams,
@@ -182,11 +193,12 @@ impl Db {
     }
     pub fn serve(&mut self, day: &str, school: i64, menu: i64, n: i64, central: bool) -> R<()> {
         let actor = self.require(&["Estoque"])?;
+        let day = crate::validation::iso_date(day)?;
         if n <= 0 || n > 1_000_000 {
             return Err("Informe entre 1 e 1.000.000 de porções.".into());
         }
         let t = self.c.transaction().map_err(sql)?;
-        let op = Self::operation(&t, actor, "REFEICAO", day, "")?;
+        let op = Self::operation(&t, actor, "REFEICAO", &day, "")?;
         let (card,recipe,snapshot):(i64,i64,String)=t.query_row("SELECT c.id,c.recipe,m.snapshot FROM menus m JOIN technical_cards c ON c.id=m.card WHERE m.id=? AND m.school=? AND m.date=? AND NOT EXISTS(SELECT 1 FROM menus n WHERE n.supersedes=m.id)",params![menu,school,day],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|_|"Selecione um cardápio aprovado para a escola e data do consumo.".to_string())?;
         let data: super::nutrition::Card =
             serde_json::from_str(&snapshot).map_err(|e| e.to_string())?;
@@ -212,12 +224,12 @@ impl Db {
                 rows.collect::<Result<Vec<_>, _>>().map_err(sql)?
             };
             for lot in lots {
-                let take = needed.min(available(&t, lot, day)?);
+                let take = needed.min(available(&t, lot, &day)?);
                 if take > 0 {
                     movement(
                         &t,
                         op,
-                        day,
+                        &day,
                         ingredient.id,
                         lot,
                         -take,

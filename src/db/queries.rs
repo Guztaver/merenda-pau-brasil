@@ -6,6 +6,8 @@ pub struct Movement {
     pub food: String,
     pub grams: i64,
     pub note: String,
+    pub unit: String,
+    pub unit_grams: i64,
 }
 pub struct Serving {
     pub date: String,
@@ -19,19 +21,23 @@ pub struct Ingredient {
     pub grams: i64,
 }
 impl Db {
-    pub fn add_food(&mut self, name: &str, minimum: &str) -> R<()> {
+    pub fn add_food(&mut self, name: &str, minimum: &str, unit: &str, unit_grams: &str) -> R<()> {
         let actor = self.require(&["Estoque"])?;
-        let min = minimum
-            .trim()
-            .parse::<i64>()
+        let min = crate::validation::integer(minimum)
             .map_err(|_| "O mínimo deve ser um número inteiro de gramas.".to_string())?;
-        if name.trim().is_empty() || !(0..=1_000_000_000).contains(&min) {
+        let conversion = crate::validation::integer(unit_grams)
+            .map_err(|_| "Informe quantos gramas equivalem a uma unidade.".to_string())?;
+        if name.trim().is_empty()
+            || !(0..=1_000_000_000).contains(&min)
+            || conversion <= 0
+            || !["g", "kg", "L", "mL", "cx", "un"].contains(&unit)
+        {
             return Err("Informe nome e mínimo entre 0 e 1.000.000.000 g.".into());
         }
         let t = self.c.transaction().map_err(sql)?;
         t.execute(
-            "INSERT INTO items(name,minimum) VALUES (?,?)",
-            params![name.trim(), min],
+            "INSERT INTO items(name,minimum,unit,unit_grams) VALUES (?,?,?,?)",
+            params![name.trim(), min, unit, conversion],
         )
         .map_err(sql)?;
         audit(
@@ -39,7 +45,7 @@ impl Db {
             Some(actor),
             "CADASTRAR_ALIMENTO",
             "items",
-            &format!("id={}; nome={name}; mínimo={min}", t.last_insert_rowid()),
+            &format!("id={}; nome={name}; mínimo={min} g equivalentes; unidade={unit}; conversão={conversion} g/unidade", t.last_insert_rowid()),
         )?;
         t.commit().map_err(sql)
     }
@@ -100,7 +106,7 @@ impl Db {
     }
     pub fn movements(&self) -> R<Vec<Movement>> {
         self.require(&[])?;
-        let mut s=self.c.prepare("SELECT m.date,i.name,m.grams,m.note FROM movements m JOIN items i ON i.id=m.item ORDER BY m.id DESC LIMIT 50").map_err(sql)?;
+        let mut s=self.c.prepare("SELECT m.date,i.name,m.grams,m.note,i.unit,i.unit_grams FROM movements m JOIN items i ON i.id=m.item ORDER BY m.id DESC LIMIT 50").map_err(sql)?;
         let rows = s
             .query_map([], |r| {
                 Ok(Movement {
@@ -108,6 +114,8 @@ impl Db {
                     food: r.get(1)?,
                     grams: r.get(2)?,
                     note: r.get(3)?,
+                    unit: r.get(4)?,
+                    unit_grams: r.get(5)?,
                 })
             })
             .map_err(sql)?;
@@ -130,6 +138,7 @@ impl Db {
     }
     pub fn portions_on(&self, day: &str) -> R<i64> {
         self.require(&[])?;
+        let day = crate::validation::iso_date(day)?;
         self.c.query_row("SELECT (SELECT COALESCE(SUM(portions),0) FROM servings WHERE date=?1)-(SELECT COALESCE(SUM(v.portions),0) FROM operations o JOIN servings v ON v.operation_id=o.reversal_of WHERE o.date=?1)",[day],|r|r.get(0)).map_err(sql)
     }
     pub fn backup(&self, path: &std::path::Path) -> R<()> {

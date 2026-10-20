@@ -51,6 +51,16 @@ pub struct ReceiptInput {
     pub batch: String,
     pub expiry: String,
 }
+#[derive(Clone)]
+pub struct Supplier {
+    pub id: i64,
+    pub name: String,
+    pub document: String,
+    pub family: bool,
+    pub caf: String,
+    pub verified: bool,
+    pub verification: String,
+}
 #[derive(Default)]
 pub struct FinanceTotals {
     pub transfers: i64,
@@ -100,6 +110,109 @@ pub fn document_valid(document: &str) -> bool {
     }
 }
 impl Db {
+    pub fn supplier_choices(&self) -> R<Vec<(i64, String)>> {
+        self.require(&[])?;
+        let mut s = self
+            .c
+            .prepare("SELECT id,name,document FROM suppliers ORDER BY name")
+            .map_err(sql)?;
+        let rows = s
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    format!(
+                        "{} • CPF/CNPJ {}",
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?
+                    ),
+                ))
+            })
+            .map_err(sql)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sql)
+    }
+    pub fn update_supplier(
+        &mut self,
+        id: i64,
+        name: &str,
+        document: &str,
+        family: bool,
+        caf: &str,
+    ) -> R<()> {
+        let actor = self.require(&["Estoque"])?;
+        if id <= 0
+            || name.trim().is_empty()
+            || !document_valid(document)
+            || (family && caf.trim().is_empty())
+        {
+            return Err(
+                "Informe nome, CPF/CNPJ válido e CAF para fornecedor da agricultura familiar."
+                    .into(),
+            );
+        }
+        let clean: String = document.chars().filter(char::is_ascii_digit).collect();
+        let t = self.c.transaction().map_err(sql)?;
+        let (old_document, old_family, old_caf): (String, bool, String) = t
+            .query_row(
+                "SELECT document,family,caf FROM suppliers WHERE id=?",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(sql)?;
+        let verification_still_valid =
+            old_document == clean && old_family == family && old_caf == caf.trim();
+        t.execute("UPDATE suppliers SET name=?,document=?,family=?,caf=?,verified=CASE WHEN ? THEN verified ELSE 0 END,verification=CASE WHEN ? THEN verification ELSE NULL END,verified_by=CASE WHEN ? THEN verified_by ELSE NULL END,verified_at=CASE WHEN ? THEN verified_at ELSE NULL END WHERE id=?", params![name.trim(),clean,family,caf.trim(),verification_still_valid,verification_still_valid,verification_still_valid,verification_still_valid,id]).map_err(sql)?;
+        audit(&t,Some(actor),"EDITAR_FORNECEDOR","suppliers",&format!("id={id}; nome={}; documento atualizado; agricultura familiar={family}; CAF declarado atualizado",name.trim()))?;
+        let still_family: bool = t
+            .query_row("SELECT family FROM suppliers WHERE id=?", [id], |r| {
+                r.get(0)
+            })
+            .map_err(sql)?;
+        if old_family != still_family {
+            audit(&t,Some(actor),"ALTERAR_ENQUADRAMENTO_FORNECEDOR","suppliers",&format!("id={id}; agricultura familiar={still_family}; registros de recebimento preservam fotografia histórica"))?;
+        }
+        t.commit().map_err(sql)
+    }
+    pub fn delete_supplier(&mut self, id: i64) -> R<()> {
+        let actor = self.require(&["Administrador"])?;
+        let t = self.c.transaction().map_err(sql)?;
+        let name: String = t
+            .query_row("SELECT name FROM suppliers WHERE id=?", [id], |r| r.get(0))
+            .map_err(sql)?;
+        let receipts: i64 = t
+            .query_row(
+                "SELECT COUNT(*) FROM receipts WHERE supplier=?",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        let documents: i64 = t
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE entity='Fornecedor familiar' AND entity_id=?",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        let lot_evidence: i64 = t
+            .query_row(
+                "SELECT COUNT(*) FROM lot_evidence WHERE supplier=?",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        if receipts > 0 || documents > 0 || lot_evidence > 0 {
+            return Err("Este fornecedor já possui recebimentos ou documentos vinculados. Edite o cadastro para manter o histórico íntegro.".into());
+        }
+        t.execute("DELETE FROM suppliers WHERE id=?", [id])
+            .map_err(sql)?;
+        audit(
+            &t,
+            Some(actor),
+            "EXCLUIR_FORNECEDOR",
+            "suppliers",
+            &format!("id={id}; nome={name}; sem operações ou documentos vinculados"),
+        )?;
+        t.commit().map_err(sql)
+    }
     pub fn add_supplier(&mut self, name: &str, document: &str, family: bool, caf: &str) -> R<()> {
         let actor = self.require(&["Estoque"])?;
         if name.trim().is_empty() || !document_valid(document) || (family && caf.trim().is_empty())
@@ -163,8 +276,9 @@ impl Db {
     }
     pub fn receive(&mut self, f: &ReceiptInput) -> R<()> {
         let actor = self.require(&["Estoque"])?;
-        crate::validation::date(&f.expiry)?;
-        if f.expiry < f.day
+        let day = crate::validation::iso_date(&f.day)?;
+        let expiry = crate::validation::iso_date(&f.expiry)?;
+        if expiry < day
             || f.grams <= 0
             || f.grams > 1_000_000_000
             || f.cents <= 0
@@ -210,19 +324,26 @@ impl Db {
         if duplicate {
             return Err("Este alimento já foi recebido nessa nota fiscal. Para entregas parciais, identifique também a parcela na nota/referência.".into());
         }
-        let op = Self::operation(&t, actor, "RECEBIMENTO", &f.day, &f.invoice)?;
-        t.execute("INSERT INTO receipts(supplier,item,invoice,process,contract,method,funding,category,grams,cents,operation_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",params![f.supplier,f.item,f.invoice.trim(),f.process.trim(),f.contract.trim(),f.method,f.funding,f.category,f.grams,f.cents,op]).map_err(sql)?;
+        let op = Self::operation(&t, actor, "RECEBIMENTO", &day, &f.invoice)?;
+        let snapshot: (String, String, String) = t
+            .query_row(
+                "SELECT name,document,caf FROM suppliers WHERE id=?",
+                [f.supplier],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(sql)?;
+        t.execute("INSERT INTO receipts(supplier,item,invoice,process,contract,method,funding,category,grams,cents,operation_id,supplier_name,supplier_document,supplier_family,supplier_caf) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![f.supplier,f.item,f.invoice.trim(),f.process.trim(),f.contract.trim(),f.method,f.funding,f.category,f.grams,f.cents,op,snapshot.0,snapshot.1,family,snapshot.2]).map_err(sql)?;
         let receipt = t.last_insert_rowid();
         t.execute(
             "INSERT INTO lots(item,receipt,batch,expiry,location) VALUES (?,?,?,?,'central')",
-            params![f.item, receipt, f.batch.trim(), f.expiry],
+            params![f.item, receipt, f.batch.trim(), expiry],
         )
         .map_err(sql)?;
         let lot = t.last_insert_rowid();
         movement(
             &t,
             op,
-            &f.day,
+            &day,
             f.item,
             lot,
             f.grams,
@@ -234,7 +355,7 @@ impl Db {
     }
     pub fn receipt_choices(&self) -> R<Vec<(i64, String)>> {
         self.require(&[])?;
-        let mut s=self.c.prepare("SELECT r.id,s.name,r.invoice,r.cents FROM receipts r JOIN suppliers s ON s.id=r.supplier WHERE NOT EXISTS(SELECT 1 FROM operations rev WHERE rev.reversal_of=r.operation_id) ORDER BY r.id DESC").map_err(sql)?;
+        let mut s=self.c.prepare("SELECT r.id,r.supplier_name,r.invoice,r.cents FROM receipts r WHERE NOT EXISTS(SELECT 1 FROM operations rev WHERE rev.reversal_of=r.operation_id) ORDER BY r.id DESC").map_err(sql)?;
         let rows = s
             .query_map([], |r| {
                 Ok((
@@ -253,13 +374,14 @@ impl Db {
     }
     pub fn record_payment(&mut self, day: &str, receipt: i64, cents: i64, document: &str) -> R<()> {
         let actor = self.require(&["Administrador"])?;
+        let day = crate::validation::iso_date(day)?;
         if cents <= 0 || document.trim().is_empty() {
             return Err("Informe valor positivo e documento do pagamento.".into());
         }
         let t = self.c.transaction().map_err(sql)?;
         let (total,received):(i64,String)=t.query_row("SELECT r.cents,o.date FROM receipts r JOIN operations o ON o.id=r.operation_id WHERE r.id=? AND NOT EXISTS(SELECT 1 FROM operations rev WHERE rev.reversal_of=o.id)",[receipt],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql)?;
         let paid:i64=t.query_row("SELECT COALESCE(SUM(p.cents),0) FROM payments p WHERE p.receipt=? AND NOT EXISTS(SELECT 1 FROM operations rev WHERE rev.reversal_of=p.operation_id)",[receipt],|r|r.get(0)).map_err(sql)?;
-        if day < received.as_str() || cents > total - paid {
+        if day < received || cents > total - paid {
             return Err(
                 "Pagamento anterior ao recebimento ou acima do saldo da nota fiscal.".into(),
             );
@@ -278,7 +400,7 @@ impl Db {
                     .into(),
             );
         }
-        let op = Self::operation(&t, actor, "PAGAMENTO", day, document)?;
+        let op = Self::operation(&t, actor, "PAGAMENTO", &day, document)?;
         t.execute(
             "INSERT INTO payments(receipt,cents,document,operation_id) VALUES (?,?,?,?)",
             params![receipt, cents, document.trim(), op],
@@ -337,7 +459,7 @@ impl Db {
                 v.carryover = c
             }
         }
-        let mut s=self.c.prepare("SELECT r.funding,s.family,r.category,SUM(CASE WHEN o.reversal_of IS NULL THEN p.cents ELSE -p.cents END) FROM operations o JOIN payments p ON p.operation_id=COALESCE(o.reversal_of,o.id) JOIN receipts r ON r.id=p.receipt JOIN suppliers s ON s.id=r.supplier WHERE substr(o.date,1,4)=? GROUP BY r.funding,s.family,r.category").map_err(sql)?;
+        let mut s=self.c.prepare("SELECT r.funding,r.supplier_family,r.category,SUM(CASE WHEN o.reversal_of IS NULL THEN p.cents ELSE -p.cents END) FROM operations o JOIN payments p ON p.operation_id=COALESCE(o.reversal_of,o.id) JOIN receipts r ON r.id=p.receipt WHERE substr(o.date,1,4)=? GROUP BY r.funding,r.supplier_family,r.category").map_err(sql)?;
         for row in s
             .query_map([year], |r| {
                 Ok((
@@ -408,7 +530,7 @@ impl Db {
             pct(v.culinary_percent),
         );
         out.push_str("\nATENÇÃO;Indicadores auxiliares calculados apenas sobre pagamentos e repasses cadastrados. Conferir extratos, estornos, elegibilidade, classificações, exercício e regras vigentes com contabilidade, controle interno e RT. Este arquivo não é prestação de contas oficial nem valida regularidade da aquisição.\n\nPagamento;Data;Fornecedor;CPF/CNPJ;Agricultura familiar declarada;CAF informado;Nota;Processo;Contrato;Método;Alimento;Categoria;Fonte;Valor em reais;Documento\n");
-        let mut s = self.c.prepare("SELECT o.id,o.date,s.name,s.document,s.family,s.caf,r.invoice,r.process,r.contract,r.method,i.name,r.category,r.funding,CASE WHEN o.reversal_of IS NULL THEN p.cents ELSE -p.cents END,p.document FROM operations o JOIN payments p ON p.operation_id=COALESCE(o.reversal_of,o.id) JOIN receipts r ON r.id=p.receipt JOIN suppliers s ON s.id=r.supplier JOIN items i ON i.id=r.item WHERE substr(o.date,1,4)=? ORDER BY o.date,o.id").map_err(sql)?;
+        let mut s = self.c.prepare("SELECT o.id,o.date,r.supplier_name,r.supplier_document,r.supplier_family,r.supplier_caf,r.invoice,r.process,r.contract,r.method,i.name,r.category,r.funding,CASE WHEN o.reversal_of IS NULL THEN p.cents ELSE -p.cents END,p.document FROM operations o JOIN payments p ON p.operation_id=COALESCE(o.reversal_of,o.id) JOIN receipts r ON r.id=p.receipt JOIN items i ON i.id=r.item WHERE substr(o.date,1,4)=? ORDER BY o.date,o.id").map_err(sql)?;
         let rows = s
             .query_map([year], |r| {
                 Ok(vec![

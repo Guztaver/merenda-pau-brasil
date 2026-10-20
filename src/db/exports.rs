@@ -56,8 +56,8 @@ impl Db {
     }
     pub fn export_menus(&self, school: i64, start: &str, end: &str, path: &Path) -> R<()> {
         self.require(&[])?;
-        crate::validation::date(start)?;
-        crate::validation::date(end)?;
+        let start = crate::validation::iso_date(start)?;
+        let end = crate::validation::iso_date(end)?;
         if start > end {
             return Err("Período inválido.".into());
         }
@@ -70,8 +70,8 @@ impl Db {
         let mut body = format!(
             "<p>Escola: {} • Período: {} a {}</p>",
             html(&school_name),
-            html(start),
-            html(end)
+            html(&start),
+            html(&end)
         );
         let mut s=self.c.prepare("SELECT m.date,m.meal,m.planned,m.snapshot,m.stamp,u.name,u.crn FROM menus m JOIN users u ON u.id=m.actor WHERE m.school=? AND m.date BETWEEN ? AND ? AND NOT EXISTS(SELECT 1 FROM menus n WHERE n.supersedes=m.id) ORDER BY m.date,m.meal").map_err(sql)?;
         let rows = s
@@ -180,7 +180,7 @@ impl Db {
         let v = self.finance_totals(year)?;
         let mut out=format!("\u{feff}Conferência financeira auxiliar — {year}\nIndicador;Valor em reais\nRepasses FNDE do exercício;{}\nSaldo reprogramado (não somado à base dos percentuais);{}\nPagamentos FNDE;{}\nPagamentos agricultura familiar com FNDE;{}\nPagamentos com recursos próprios;{}\nIn natura/minimamente processados FNDE;{}\nProcessados e ultraprocessados FNDE;{}\nIngredientes culinários FNDE;{}\n",currency(v.transfers),currency(v.carryover),currency(v.federal_paid),currency(v.family_paid),currency(v.own_paid),currency(v.natural_paid),currency(v.processed_paid),currency(v.culinary_paid));
         out+="\nData;Operação;Tipo;Nota;Fornecedor;Fonte;Categoria;Valor em reais;Documento do pagamento\n";
-        let mut s=self.c.prepare("SELECT o.date,o.id,o.kind,r.invoice,s.name,r.funding,r.category,CASE WHEN o.reversal_of IS NULL THEN p.cents ELSE -p.cents END,p.document FROM operations o JOIN payments p ON p.operation_id=COALESCE(o.reversal_of,o.id) JOIN receipts r ON r.id=p.receipt JOIN suppliers s ON s.id=r.supplier WHERE substr(o.date,1,4)=? ORDER BY o.date,o.id").map_err(sql)?;
+        let mut s=self.c.prepare("SELECT o.date,o.id,o.kind,r.invoice,r.supplier_name,r.funding,r.category,CASE WHEN o.reversal_of IS NULL THEN p.cents ELSE -p.cents END,p.document FROM operations o JOIN payments p ON p.operation_id=COALESCE(o.reversal_of,o.id) JOIN receipts r ON r.id=p.receipt WHERE substr(o.date,1,4)=? ORDER BY o.date,o.id").map_err(sql)?;
         let rows = s
             .query_map([year], |r| {
                 Ok(vec![
@@ -210,7 +210,7 @@ impl Db {
     pub fn traceability_csv(&self) -> R<String> {
         self.require(&[])?;
         let mut out="\u{feff}Movimento;Data;Alimento;Gramas;Lote;Validade;Local;Fornecedor;NF/documento histórico;Operação;Autor;Legado;Justificativa\n".to_string();
-        let mut s=self.c.prepare("SELECT m.id,m.date,i.name,m.grams,l.batch,COALESCE(l.expiry,''),COALESCE(l.location,''),COALESCE(s.name,ls.name,''),COALESCE(r.invoice,le.invoice,''),COALESCE(m.operation_id,0),COALESCE(u.name,'Histórico anterior à v2'),COALESCE(l.legacy,1),m.note FROM movements m JOIN items i ON i.id=m.item LEFT JOIN lots l ON l.id=m.lot_id LEFT JOIN receipts r ON r.id=l.receipt LEFT JOIN suppliers s ON s.id=r.supplier LEFT JOIN lot_evidence le ON le.lot=COALESCE(l.parent,l.id) LEFT JOIN suppliers ls ON ls.id=le.supplier LEFT JOIN operations o ON o.id=m.operation_id LEFT JOIN users u ON u.id=o.actor ORDER BY m.date,m.id").map_err(sql)?;
+        let mut s=self.c.prepare("SELECT m.id,m.date,i.name,m.grams,l.batch,COALESCE(l.expiry,''),COALESCE(l.location,''),COALESCE(r.supplier_name,ls.name,''),COALESCE(r.invoice,le.invoice,''),COALESCE(m.operation_id,0),COALESCE(u.name,'Histórico anterior à v2'),COALESCE(l.legacy,1),m.note FROM movements m JOIN items i ON i.id=m.item LEFT JOIN lots l ON l.id=m.lot_id LEFT JOIN receipts r ON r.id=l.receipt LEFT JOIN lot_evidence le ON le.lot=COALESCE(l.parent,l.id) LEFT JOIN suppliers ls ON ls.id=le.supplier LEFT JOIN operations o ON o.id=m.operation_id LEFT JOIN users u ON u.id=o.actor ORDER BY m.date,m.id").map_err(sql)?;
         let rows = s
             .query_map([], |r| {
                 Ok(vec![

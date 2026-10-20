@@ -43,7 +43,7 @@ impl Db {
         let version: i64 = c
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(sql)?;
-        if version > 3 {
+        if version > 4 {
             return Err("Banco criado por uma versão mais recente. Atualize o aplicativo.".into());
         }
         if version < 2 {
@@ -74,6 +74,12 @@ impl Db {
                 .map_err(sql)?;
             t.commit().map_err(sql)?;
         }
+        if version < 4 {
+            let t = c.transaction().map_err(sql)?;
+            t.execute_batch(include_str!("migration_v4.sql"))
+                .map_err(sql)?;
+            t.commit().map_err(sql)?;
+        }
         Ok(Self { c, actor: None })
     }
     pub fn names(&self, table: &str) -> Vec<(i64, String)> {
@@ -92,6 +98,53 @@ impl Db {
             return Vec::new();
         };
         rows.filter_map(Result::ok).collect()
+    }
+    pub fn suppliers(&self) -> R<Vec<purchasing::Supplier>> {
+        self.require(&[])?;
+        let mut stmt = self.c.prepare("SELECT id,name,document,family,caf,verified,COALESCE(verification,'') FROM suppliers ORDER BY name").map_err(sql)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(purchasing::Supplier {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    document: r.get(2)?,
+                    family: r.get(3)?,
+                    caf: r.get(4)?,
+                    verified: r.get(5)?,
+                    verification: r.get(6)?,
+                })
+            })
+            .map_err(sql)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(sql)
+    }
+    pub fn food_choices(&self) -> Vec<(i64, String)> {
+        if self.require(&[]).is_err() {
+            return Vec::new();
+        }
+        let Ok(mut stmt) = self
+            .c
+            .prepare("SELECT id,name,unit FROM items ORDER BY name")
+        else {
+            return Vec::new();
+        };
+        let Ok(rows) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                format!("{} • {}", r.get::<_, String>(1)?, r.get::<_, String>(2)?),
+            ))
+        }) else {
+            return Vec::new();
+        };
+        rows.filter_map(Result::ok).collect()
+    }
+    pub fn item_measure(&self, item: i64) -> Option<(String, i64)> {
+        self.c
+            .query_row(
+                "SELECT unit,unit_grams FROM items WHERE id=?",
+                [item],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok()
     }
     pub fn add(&mut self, table: &str, name: &str) -> R<()> {
         let actor = self.require(if table == "recipes" {
@@ -119,6 +172,7 @@ impl Db {
         reason: &str,
     ) -> R<i64> {
         governance::open_date(c, date)?;
+        let date = crate::validation::iso_date(date)?;
         c.execute(
             "INSERT INTO operations(kind,date,actor,reason) VALUES (?,?,?,?)",
             params![kind, date, actor, reason],

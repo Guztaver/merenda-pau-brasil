@@ -2,7 +2,7 @@
 
 Aplicativo nativo para Windows, desenvolvido em Rust com SQLite embarcado e interface em português. Opera offline: não exige servidor, navegador ou conta para uso local.
 
-Controle de alimentos por peso, movimentações retroativas, receitas por porção, consumo por escola, consulta de saldo por data, relatórios CSV e backup.
+Controle de alimentos e materiais por unidades configuráveis (kg, litros, caixas, unidades), convertidas para peso, movimentações retroativas, fornecedores com CPF/CNPJ, receitas por porção, consumo por escola, consulta de saldo por data, relatórios CSV e backup. Datas, quantidades e valores usam formatação brasileira.
 
 **Ferramenta auxiliar para registros municipais; não certificada nem integrada ao FNDE.** Esta versão acrescenta apoio a fichas técnicas e cardápios aprovados por nutricionista, compras, lotes, documentação, auditoria e indicadores financeiros. Não afirma conformidade integral com PNAE nem com edital específico. Consulte [AVALIACAO-FNDE.md](AVALIACAO-FNDE.md) antes de uso institucional.
 

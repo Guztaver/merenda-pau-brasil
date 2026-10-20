@@ -15,6 +15,11 @@ pub struct ComplianceForms {
     pub supplier_document: String,
     pub family: bool,
     pub caf: String,
+    pub supplier_edit_id: i64,
+    pub supplier_edit_name: String,
+    pub supplier_edit_document: String,
+    pub supplier_edit_family: bool,
+    pub supplier_edit_caf: String,
     pub supplier_verify_id: i64,
     pub supplier_verify_reference: String,
     pub supplier_verify_reason: String,
@@ -74,7 +79,7 @@ pub struct ComplianceForms {
 }
 impl Default for ComplianceForms {
     fn default() -> Self {
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let today = chrono::Local::now().format("%d/%m/%Y").to_string();
         let month = chrono::Local::now().format("%Y-%m").to_string();
         Self {
             tab: 0,
@@ -82,6 +87,11 @@ impl Default for ComplianceForms {
             supplier_document: String::new(),
             family: false,
             caf: String::new(),
+            supplier_edit_id: 0,
+            supplier_edit_name: String::new(),
+            supplier_edit_document: String::new(),
+            supplier_edit_family: false,
+            supplier_edit_caf: String::new(),
             supplier_verify_id: 0,
             supplier_verify_reference: String::new(),
             supplier_verify_reason: String::new(),
@@ -130,7 +140,7 @@ impl Default for ComplianceForms {
             },
             menu_count: String::new(),
             menu_replaces: String::new(),
-            menu_start: format!("{month}-01"),
+            menu_start: chrono::Local::now().format("01/%m/%Y").to_string(),
             menu_end: today.clone(),
             food: 0,
             food_category: "In natura/minimamente processado".into(),

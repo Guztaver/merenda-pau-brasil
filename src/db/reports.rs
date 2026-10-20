@@ -1,11 +1,11 @@
 use super::Db;
-use crate::validation::{date, kg, sql, R};
+use crate::validation::{kg, sql, R};
 use rusqlite::params;
 impl Db {
     pub fn report(&self, a: &str, b: &str) -> R<String> {
         self.require(&[])?;
-        date(a)?;
-        date(b)?;
+        let a = crate::validation::iso_date(a)?;
+        let b = crate::validation::iso_date(b)?;
         if a > b {
             return Err("A data inicial deve vir antes da final.".into());
         }
