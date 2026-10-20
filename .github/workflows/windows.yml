@@ -1,0 +1,85 @@
+name: Windows CI e entrega
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-build:
+    name: Validar e compilar Windows
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Preparar Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --version
+          cargo --version
+      - name: Verificar formatação
+        run: cargo fmt --all --check
+      - name: Analisar código
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Executar testes
+        run: cargo test --locked
+      - name: Compilar aplicativo
+        run: cargo build --release --locked
+      - name: Preparar pacote e hash
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path dist/package -Force | Out-Null
+          Copy-Item target/release/merenda-pau-brasil.exe dist/package/MerendaPauBrasil.exe
+          Copy-Item LEIA-ME.md,ARQUITETURA.md,AVALIACAO-FNDE.md dist/package/
+          @("commit=$env:GITHUB_SHA", "run=$env:GITHUB_RUN_ID", "branch=$env:GITHUB_REF_NAME") | Set-Content dist/package/BUILD.txt -Encoding utf8
+          Compress-Archive -Path dist/package/* -DestinationPath dist/MerendaPauBrasil-Windows-x64.zip
+          $hash = (Get-FileHash dist/MerendaPauBrasil-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  MerendaPauBrasil-Windows-x64.zip" | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: merenda-windows-x64
+          path: |
+            dist/MerendaPauBrasil-Windows-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publicar versão da main
+    needs: verify-and-build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: merenda-windows-x64
+          path: dist
+      - name: Publicar executável em Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="main-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          printf 'Aplicativo Windows x64 offline.\n\nCommit: %s\n\nBaixe o ZIP e extraia antes de executar. O banco existente fica preservado em LOCALAPPDATA.\n\nVersão de apoio ao estoque e consumo; veja AVALIACAO-FNDE.md antes do uso oficial.\n' "$COMMIT" > release-notes.md
+          gh release create "$tag" dist/MerendaPauBrasil-Windows-x64.zip dist/SHA256SUMS.txt --repo "$GH_REPO" --target "$COMMIT" --title "Merenda Pau Brasil — build ${GITHUB_RUN_NUMBER}" --notes-file release-notes.md --latest
