@@ -1,7 +1,12 @@
 pub mod components;
 mod dashboard;
 mod foods;
+mod governance;
+pub mod login;
+mod lots;
 mod movements;
+mod nutrition;
+mod purchases;
 mod recipes;
 mod reports;
 mod schools;

@@ -141,3 +141,32 @@ pub fn pretty_date(s: &str) -> String {
         .map(|d| d.format("%d/%m/%Y").to_string())
         .unwrap_or_else(|_| s.into())
 }
+pub fn options(ui: &mut egui::Ui, label: &str, key: &str, value: &mut String, choices: &[&str]) {
+    ui.label(RichText::new(label).size(13.).strong());
+    egui::ComboBox::from_id_salt(key)
+        .width(ui.available_width())
+        .selected_text(value.as_str())
+        .show_ui(ui, |ui| {
+            for choice in choices {
+                ui.selectable_value(value, (*choice).to_string(), *choice);
+            }
+        });
+}
+pub fn multiline(ui: &mut egui::Ui, label: &str, value: &mut String) {
+    ui.label(RichText::new(label).size(13.).strong());
+    ui.add(
+        egui::TextEdit::multiline(value)
+            .desired_width(ui.available_width())
+            .desired_rows(3)
+            .margin(egui::vec2(12., 10.)),
+    );
+}
+pub fn password(ui: &mut egui::Ui, label: &str, value: &mut String) {
+    ui.label(RichText::new(label).size(13.).strong());
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .password(true)
+            .desired_width(ui.available_width())
+            .margin(egui::vec2(12., 10.)),
+    );
+}

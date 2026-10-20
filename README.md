@@ -4,7 +4,7 @@ Aplicativo nativo para Windows, desenvolvido em Rust com SQLite embarcado e inte
 
 Controle de alimentos por peso, movimentações retroativas, receitas por porção, consumo por escola, consulta de saldo por data, relatórios CSV e backup.
 
-**Ferramenta auxiliar de estoque e consumo. Aderência integral ao PNAE/FNDE e a um edital específico não está demonstrada.** Consulte [AVALIACAO-FNDE.md](AVALIACAO-FNDE.md) para a revisão das fontes oficiais e as lacunas identificadas.
+**Ferramenta auxiliar para registros municipais; não certificada nem integrada ao FNDE.** Esta versão acrescenta apoio a fichas técnicas e cardápios aprovados por nutricionista, compras, lotes, documentação, auditoria e indicadores financeiros. Não afirma conformidade integral com PNAE nem com edital específico. Consulte [AVALIACAO-FNDE.md](AVALIACAO-FNDE.md) antes de uso institucional.
 
 ## Executar
 

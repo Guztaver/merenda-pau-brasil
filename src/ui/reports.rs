@@ -3,6 +3,14 @@ use crate::app::{App, Notice};
 use chrono::Local;
 use eframe::egui;
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    card(ui,"Dossiê de conferência municipal","Exporta banco, auditoria, rastreabilidade, fichas, cardápios, indicadores PNAE, avaliação de alimentos e cópias verificadas dos anexos. Uso do administrador.",|ui|{
+        field(ui,"Ano do dossiê",&mut app.compliance.year);
+        hint(ui,"Não transmite dados ao FNDE. Observe o canal oficial vigente, inclusive a transição para SIGPC Ágil em 2026. A publicação de cardápios e a prestação de contas continuam sob responsabilidade da prefeitura.");
+        if primary(ui,"Gerar dossiê local"){
+            match app.db.export_dossier(&app.compliance.year,&app.dir){Ok(path)=>{app.notify(Ok(()));app.notice.as_mut().unwrap().text=format!("Dossiê salvo em {}",path.display());},Err(e)=>{app.notify(Err(e));}}
+        }
+    });
+    ui.add_space(16.);
     card(
         ui,
         "Relatório por período",

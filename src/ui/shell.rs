@@ -30,26 +30,41 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     .strong(),
             );
             ui.add_space(8.);
-            for page in Page::ALL {
-                let selected = app.page == page;
-                let button = egui::Button::new(
-                    RichText::new(page.label())
-                        .color(if selected { GREEN } else { MUTED })
-                        .strong(),
-                )
-                .fill(if selected { PALE } else { Color32::TRANSPARENT })
-                .stroke(Stroke::NONE)
-                .corner_radius(11);
-                if ui.add_sized([200., 44.], button).clicked() {
-                    app.navigate(page);
-                }
-            }
+            egui::ScrollArea::vertical()
+                .id_salt("nav_scroll")
+                .max_height((ui.available_height() - 140.).max(100.))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.;
+                    for page in Page::ALL {
+                        let selected = app.page == page;
+                        let button = egui::Button::new(
+                            RichText::new(page.label())
+                                .color(if selected { GREEN } else { MUTED })
+                                .strong(),
+                        )
+                        .fill(if selected { PALE } else { Color32::TRANSPARENT })
+                        .stroke(Stroke::NONE)
+                        .corner_radius(11);
+                        if ui.add_sized([200., 36.], button).clicked() {
+                            app.navigate(page);
+                        }
+                    }
+                });
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                hint(ui, "Dados neste computador");
+                if ui.button("Sair da conta").clicked() {
+                    app.logout();
+                }
+                if let Some(user) = app.db.user() {
+                    hint(ui, &format!("{} • {}", user.name, user.role));
+                }
+                hint(ui, "Sessão local • pausa automática em 15 min");
                 badge(ui, "●  Funcionando offline", false);
                 ui.add_space(8.);
             });
         });
+    if app.db.user().is_none() {
+        return;
+    }
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(BG).inner_margin(28.))
         .show(ctx, |ui| {
@@ -107,6 +122,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         Page::Servings => servings::show(app, ui),
                         Page::Schools => schools::show(app, ui),
                         Page::Reports => reports::show(app, ui),
+                        Page::Purchases => purchases::show(app, ui),
+                        Page::Lots => lots::show(app, ui),
+                        Page::Nutrition => nutrition::show(app, ui),
+                        Page::Governance => governance::show(app, ui),
                     }
                     ui.add_space(24.);
                     hint(
