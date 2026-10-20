@@ -1,0 +1,12 @@
+/target/
+/dist/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.exe
+*.zip
+.env
+.env.*
+!.env.example

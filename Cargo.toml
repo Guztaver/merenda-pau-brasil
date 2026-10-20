@@ -1,0 +1,9 @@
+[package]
+name = "merenda-pau-brasil"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+chrono = "0.4"
