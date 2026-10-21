@@ -17,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eframe::run_native(
         "Merenda • Prefeitura de Pau Brasil",
         eframe::NativeOptions {
+            renderer: eframe::Renderer::Wgpu,
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([1240., 860.])
                 .with_min_inner_size([960., 700.]),

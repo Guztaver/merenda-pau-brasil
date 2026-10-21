@@ -25,6 +25,8 @@ src/
     reports.rs         Tela de exportação e backup
 ```
 
+A janela usa o renderer `wgpu` do `eframe`, evitando depender de um contexto OpenGL ES via WGL, que não está disponível em alguns drivers de vídeo do Windows. O backend escolhe uma API gráfica suportada pelo adaptador do computador.
+
 As telas acessam métodos de `Db`; nenhuma tela executa SQL nem acessa a conexão diretamente. As transações que dão baixa nos alimentos e a validação dos saldos históricos permanecem no banco. Os consumos passados armazenam o peso registrado, mesmo se a receita for alterada.
 
 Cada formulário tem seu próprio estado. Editar a data de consulta do estoque não altera a data da movimentação ou do registro de refeições. Trocar de tela preserva os campos ainda não salvos; salvar limpa apenas os campos pertinentes àquela operação.
