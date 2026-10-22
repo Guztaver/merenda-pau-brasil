@@ -1304,6 +1304,7 @@ dependencies = [
  "argon2",
  "chrono",
  "eframe",
+ "egui-wgpu",
  "rand_core",
  "rusqlite",
  "serde",

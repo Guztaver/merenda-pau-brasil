@@ -80,6 +80,47 @@ fn legacy_database_migrates_without_dropping_existing_inventory() {
 }
 
 #[test]
+fn partially_applied_v2_migration_is_recovered_without_duplicate_column() {
+    let c = Connection::open_in_memory().unwrap();
+    c.execute_batch(include_str!("schema.sql")).unwrap();
+    c.execute_batch("CREATE TABLE lots(id INTEGER PRIMARY KEY, item INTEGER NOT NULL REFERENCES items(id), receipt INTEGER, batch TEXT NOT NULL, expiry TEXT, location TEXT NOT NULL, legacy INTEGER NOT NULL DEFAULT 0, parent INTEGER);")
+        .unwrap();
+    c.execute_batch("ALTER TABLE movements ADD COLUMN lot_id INTEGER REFERENCES lots(id);")
+        .unwrap();
+    c.execute("INSERT INTO items(id,name,minimum) VALUES(1,'Arroz',0)", [])
+        .unwrap();
+    c.execute(
+        "INSERT INTO movements(date,item,grams,note) VALUES('2026-01-01',1,2500,'Saldo legado')",
+        [],
+    )
+    .unwrap();
+    c.pragma_update(None, "user_version", 1).unwrap();
+
+    let db = Db::init(c).unwrap();
+
+    assert_eq!(
+        db.c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
+    assert_eq!(
+        db.c.query_row("SELECT grams FROM movements WHERE item=1", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        2500
+    );
+    assert_eq!(
+        db.c.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('movements') WHERE name='lot_id'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
 fn v3_migration_preserves_supplier_snapshot_and_adds_item_units() {
     let c = Connection::open_in_memory().unwrap();
     c.execute_batch(include_str!("schema.sql")).unwrap();
