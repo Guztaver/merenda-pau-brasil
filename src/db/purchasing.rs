@@ -278,8 +278,13 @@ impl Db {
         let actor = self.require(&["Estoque"])?;
         let day = crate::validation::iso_date(&f.day)?;
         let expiry = crate::validation::iso_date(&f.expiry)?;
-        if expiry < day
-            || f.grams <= 0
+        if expiry < day {
+            return Err("A validade do lote é anterior à data do recebimento. Confira as duas datas.".into());
+        }
+        if f.supplier <= 0 || f.item <= 0 {
+            return Err("Selecione um fornecedor e um alimento cadastrados.".into());
+        }
+        if f.grams <= 0
             || f.grams > 1_000_000_000
             || f.cents <= 0
             || f.cents > 1_000_000_000_000
@@ -290,7 +295,7 @@ impl Db {
             || !["FNDE", "Próprios"].contains(&f.funding.as_str())
             || !CATEGORIES.contains(&f.category.as_str())
         {
-            return Err("Preencha fornecedor, alimento, nota fiscal, processo, contrato, lote, validade e valores positivos válidos.".into());
+            return Err("Confira nota fiscal, processo, contrato, lote e valores: todos são obrigatórios e os valores precisam ser positivos.".into());
         }
         let t = self.c.transaction().map_err(sql)?;
         let family: bool = t

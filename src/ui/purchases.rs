@@ -11,17 +11,42 @@ pub fn receive_form(app: &mut App, ui: &mut egui::Ui) {
         .db
         .item_measure(app.compliance.receipt.item)
         .unwrap_or_else(|| ("g".into(), 1));
+    let received_day = crate::validation::iso_date(&app.compliance.receipt.day);
+    let expiry_day = crate::validation::iso_date(&app.compliance.receipt.expiry);
+    let day_error = show_errors.then(|| received_day.as_ref().err().map(String::as_str)).flatten();
+    let expiry_error = if show_errors {
+        match (&received_day, &expiry_day) {
+            (_, Err(error)) => Some(error.as_str()),
+            (Ok(day), Ok(expiry)) if expiry < day => {
+                Some("A validade não pode ser anterior ao recebimento.")
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let weight_error = if show_errors {
+        crate::validation::measured_grams(&app.compliance.receipt_weight, measure.1)
+            .err()
+    } else {
+        None
+    };
+    let value_error = if show_errors {
+        money(&app.compliance.receipt_value).err()
+    } else {
+        None
+    };
     card(
         ui,
         "Receber alimentos com rastreabilidade",
         "Registre a entrega real. Para notas com vários alimentos, lance uma linha por alimento.",
         |ui| {
             ui.columns(2, |c| {
-                required_field(
+                field_error(
                     &mut c[0],
                     "Data do recebimento (DD/MM/AAAA)",
                     &mut app.compliance.receipt.day,
-                    show_errors,
+                    day_error,
                 );
                 required_choose(
                     &mut c[1],
@@ -85,25 +110,25 @@ pub fn receive_form(app: &mut App, ui: &mut egui::Ui) {
                     &mut app.compliance.receipt.batch,
                     show_errors,
                 );
-                required_field(
+                field_error(
                     &mut c[1],
                     "Validade (DD/MM/AAAA)",
                     &mut app.compliance.receipt.expiry,
-                    show_errors,
+                    expiry_error,
                 );
             });
             ui.columns(2, |c| {
-                required_field(
+                field_error(
                     &mut c[0],
                     &format!("Quantidade recebida ({})", measure.0),
                     &mut app.compliance.receipt_weight,
-                    show_errors,
+                    weight_error.as_deref(),
                 );
-                required_field(
+                field_error(
                     &mut c[1],
                     "Valor desta linha da nota (R$)",
                     &mut app.compliance.receipt_value,
-                    show_errors,
+                    value_error.as_deref(),
                 );
             });
             options(

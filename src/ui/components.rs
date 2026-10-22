@@ -28,10 +28,24 @@ pub fn field(ui: &mut egui::Ui, label: &str, value: &mut String) {
     field_required(ui, label, value, false);
 }
 pub fn required_field(ui: &mut egui::Ui, label: &str, value: &mut String, show_errors: bool) {
-    let invalid = show_errors && value.trim().is_empty();
-    field_required(ui, label, value, invalid);
+    let error = (show_errors && value.trim().is_empty()).then_some("Preencha este campo.");
+    field_error(ui, label, value, error);
 }
 pub fn field_required(ui: &mut egui::Ui, label: &str, value: &mut String, invalid: bool) {
+    field_error(
+        ui,
+        label,
+        value,
+        invalid.then_some("Preencha este campo."),
+    );
+}
+pub fn field_error(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    error: Option<&str>,
+) {
+    let invalid = error.is_some();
     ui.label(RichText::new(label).size(13.).strong().color(if invalid {
         Color32::from_rgb(176, 45, 45)
     } else {
@@ -53,7 +67,10 @@ pub fn field_required(ui: &mut egui::Ui, label: &str, value: &mut String, invali
         })
         .inner;
     if invalid {
-        ui.colored_label(Color32::from_rgb(176, 45, 45), "Preencha este campo.");
+        ui.colored_label(
+            Color32::from_rgb(176, 45, 45),
+            error.expect("invalid field has a validation message"),
+        );
     }
     if response.changed() {
         let previous = value.clone();
