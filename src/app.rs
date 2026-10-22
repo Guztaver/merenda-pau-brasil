@@ -224,9 +224,10 @@ impl App {
     }
 }
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    fn ui(&mut self, root: &mut egui::Ui, _: &mut eframe::Frame) {
+        let ctx = root.ctx().clone();
         if self.db.user().is_none() {
-            ui::login::show(self, ctx);
+            ui::login::show(self, root);
             return;
         }
         if ctx.input(|i| !i.events.is_empty()) {
@@ -237,6 +238,6 @@ impl eframe::App for App {
             return;
         }
         ctx.request_repaint_after(std::time::Duration::from_secs(30));
-        ui::shell::show(self, ctx);
+        ui::shell::show(self, root);
     }
 }

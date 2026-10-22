@@ -4,8 +4,7 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }
-egui-wgpu = { version = "0.31", features = ["winit"] }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }
 rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 chrono = "0.4"
 argon2 = "0.5"

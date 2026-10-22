@@ -2,12 +2,12 @@ use super::{components::*, theme::*, *};
 use crate::app::{App, Page};
 use eframe::egui::{self, Color32, RichText, Stroke};
 
-pub fn show(app: &mut App, ctx: &egui::Context) {
-    egui::SidePanel::left("navigation")
+pub fn show(app: &mut App, root: &mut egui::Ui) {
+    egui::Panel::left("navigation")
         .resizable(false)
-        .exact_width(242.)
+        .exact_size(242.)
         .frame(egui::Frame::new().fill(Color32::WHITE).inner_margin(20.))
-        .show(ctx, |ui| {
+        .show(root, |ui| {
             ui.add_space(12.);
             ui.horizontal(|ui| {
                 egui::Frame::new()
@@ -67,7 +67,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(BG).inner_margin(28.))
-        .show(ctx, |ui| {
+        .show(root, |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("main_scroll")
                 .auto_shrink([false, false])

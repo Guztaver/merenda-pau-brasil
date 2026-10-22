@@ -59,7 +59,7 @@ pub fn field_required(ui: &mut egui::Ui, label: &str, value: &mut String, invali
         let previous = value.clone();
         let cursor = egui::text_edit::TextEditState::load(ui.ctx(), response.id)
             .and_then(|state| state.cursor.char_range())
-            .map(|range| range.primary.index)
+            .map(|range| range.primary.index.0)
             .unwrap_or_else(|| previous.chars().count());
         let digits_before = previous
             .chars()

@@ -1,8 +1,8 @@
 use super::{components::*, theme::*};
 use crate::app::App;
 use eframe::egui::{self, RichText};
-pub fn show(app: &mut App, ctx: &egui::Context) {
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(BG).inner_margin(32.)).show(ctx,|ui|{
+pub fn show(app: &mut App, root: &mut egui::Ui) {
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(BG).inner_margin(32.)).show(root,|ui|{
         egui::ScrollArea::vertical().show(ui,|ui|{
             ui.add_space(25.);
             ui.vertical_centered(|ui|{ui.label(RichText::new("Merenda • Pau Brasil").size(32.).strong().color(GREEN));hint(ui,"Gestão municipal da alimentação escolar • 100% offline");});ui.add_space(24.);

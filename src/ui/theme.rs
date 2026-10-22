@@ -7,7 +7,7 @@ pub const LINE: Color32 = Color32::from_rgb(229, 236, 230);
 pub const PALE: Color32 = Color32::from_rgb(232, 244, 236);
 pub const AMBER: Color32 = Color32::from_rgb(163, 99, 29);
 pub fn apply(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
     style.visuals = egui::Visuals::light();
     style.visuals.override_text_color = Some(INK);
     style.visuals.panel_fill = BG;
@@ -49,5 +49,5 @@ pub fn apply(ctx: &egui::Context) {
     style
         .text_styles
         .insert(TextStyle::Small, FontId::proportional(12.));
-    ctx.set_style(style);
+    ctx.set_style_of(egui::Theme::Light, style);
 }
